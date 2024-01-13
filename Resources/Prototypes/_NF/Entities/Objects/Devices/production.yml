@@ -14,3 +14,19 @@
         Glass: 1
     - type: StaticPrice
       price: 100
+
+- type: entity
+  parent: BaseComputerCircuitboard
+  id: ShuttleIDComputerCircuitboard
+  name: Shuttle ID card computer board
+  description: A computer printed circuit board for a shuttle-specific ID card console.
+  components:
+  - type: Sprite
+    state: cpu_command
+  - type: ComputerBoard
+    prototype: ComputerShuttleIdConsole
+  - type: StaticPrice
+    price: 750
+  - type: Tag
+    tags:
+    - DroneUsable

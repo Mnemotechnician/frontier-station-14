@@ -30,6 +30,7 @@ namespace Content.Client.Access.UI
         private string?[]? _lastShuttleName;
         private string? _lastJobProto;
         private bool _interfaceEnabled = false;
+        private bool _isLimitedAccess = false;
 
         public IdCardConsoleWindow(IdCardConsoleBoundUserInterface owner, IPrototypeManager prototypeManager,
             List<ProtoId<AccessLevelPrototype>> accessLevels)
@@ -122,6 +123,13 @@ namespace Content.Client.Access.UI
             JobTitleLineEdit.Text = Loc.GetString(job.Name);
             args.Button.SelectId(args.Id);
 
+            // Frontier
+            if (_isLimitedAccess)
+            {
+                SubmitData();
+                return;
+            }
+
             ClearAllAccess();
 
             // this is a sussy way to do this
@@ -192,7 +200,6 @@ namespace Content.Client.Access.UI
 
             // Frontier - shuttle renaming support
             ShipNameLabel.Modulate = interfaceEnabled ? Color.White : Color.Gray;
-
             ShipNameLineEdit.Editable = interfaceEnabled && state.HasOwnedShuttle;
             ShipSuffixLineEdit.Editable = false; // "Make sure you cannot change the suffix at all." - @dvir001, 2023.11.16
 
@@ -223,6 +230,8 @@ namespace Content.Client.Access.UI
                     button.Pressed = state.TargetIdAccessList?.Contains(accessName) ?? false;
                     button.Disabled = (!state.AllowedModifyAccessList?.Contains(accessName)) ?? true;
                 }
+
+                button.Disabled |= !state.IsFullModificationAccess; // Frontier
             }
 
             var jobIndex = _jobPrototypeIds.IndexOf(state.TargetIdJobPrototype);
@@ -237,7 +246,12 @@ namespace Content.Client.Access.UI
             _lastShuttleName = state.TargetShuttleNameParts;
             _interfaceEnabled = interfaceEnabled;
 
+            // Frontier
             EnsureValidShuttleName();
+            _isLimitedAccess = !state.IsFullModificationAccess;
+
+            FullNameLineEdit.Editable = ShipNameLineEdit.Editable = state.IsFullModificationAccess;
+            FullNameSaveButton.Disabled = ShipNameSaveButton.Disabled = _isLimitedAccess;
         }
 
         // <summary>

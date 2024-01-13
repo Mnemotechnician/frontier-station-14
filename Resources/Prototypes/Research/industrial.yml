@@ -131,6 +131,7 @@
   - ThrusterMachineCircuitboard
   - GyroscopeMachineCircuitboard
   - MiniGravityGeneratorCircuitboard
+  - ShuttleIDComputerCircuitboard # frontier
 
 - type: technology
   id: RipleyAPLU

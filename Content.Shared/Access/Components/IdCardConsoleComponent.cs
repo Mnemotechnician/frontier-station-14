@@ -70,10 +70,11 @@ public sealed partial class IdCardConsoleComponent : Component
         public readonly string? TargetIdFullName;
         public readonly string? TargetIdJobTitle;
         public readonly bool HasOwnedShuttle;
-        public readonly string?[]? TargetShuttleNameParts;
+        public readonly string?[]? TargetShuttleNameParts; // Frontier
         public readonly string[]? TargetIdAccessList;
         public readonly string[]? AllowedModifyAccessList;
         public readonly string TargetIdJobPrototype;
+        public readonly bool IsFullModificationAccess; // Frontier
 
         public IdCardConsoleBoundUserInterfaceState(bool isPrivilegedIdPresent,
             bool isPrivilegedIdAuthorized,
@@ -86,7 +87,8 @@ public sealed partial class IdCardConsoleComponent : Component
             string[]? allowedModifyAccessList,
             string targetIdJobPrototype,
             string privilegedIdName,
-            string targetIdName)
+            string targetIdName,
+            bool isFullModificationAccess)
         {
             IsPrivilegedIdPresent = isPrivilegedIdPresent;
             IsPrivilegedIdAuthorized = isPrivilegedIdAuthorized;
@@ -100,6 +102,7 @@ public sealed partial class IdCardConsoleComponent : Component
             TargetIdJobPrototype = targetIdJobPrototype;
             PrivilegedIdName = privilegedIdName;
             TargetIdName = targetIdName;
+            IsFullModificationAccess = isFullModificationAccess;
         }
     }
 

@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using Content.Server.Station.Systems;
 using Content.Server.StationRecords.Systems;
 using Content.Shared.Access.Components;
@@ -12,7 +13,12 @@ using Robust.Server.GameObjects;
 using Robust.Shared.Containers;
 using Robust.Shared.Prototypes;
 using System.Linq;
+using Content.Server.Forensics;
+using Content.Server.Preferences.Managers;
 using Content.Server.Shipyard.Systems;
+using Content.Server.StationRecords;
+using Content.Shared._NF.Access;
+using Content.Shared.Preferences;
 using Content.Shared.Shipyard.Components;
 using static Content.Shared.Access.Components.IdCardConsoleComponent;
 using static Content.Shared.Shipyard.Components.ShuttleDeedComponent;
@@ -31,6 +37,7 @@ public sealed class IdCardConsoleSystem : SharedIdCardConsoleSystem
     [Dependency] private readonly IdCardSystem _idCard = default!;
     [Dependency] private readonly ISharedAdminLogManager _adminLogger = default!;
     [Dependency] private readonly ShipyardSystem _shipyard = default!;
+    [Dependency] private readonly IServerPreferencesManager _preferences = default!;
 
     public override void Initialize()
     {
@@ -95,7 +102,8 @@ public sealed class IdCardConsoleSystem : SharedIdCardConsoleSystem
                 possibleAccess,
                 string.Empty,
                 privilegedIdName,
-                string.Empty);
+                string.Empty,
+                false);
         }
         else
         {
@@ -131,7 +139,8 @@ public sealed class IdCardConsoleSystem : SharedIdCardConsoleSystem
                 possibleAccess,
                 jobProto,
                 privilegedIdName,
-                EntityManager.GetComponent<MetaDataComponent>(targetId).EntityName);
+                EntityManager.GetComponent<MetaDataComponent>(targetId).EntityName,
+                IsJobRenameOnly(uid));
         }
 
         _userInterface.TrySetUiState(uid, IdCardConsoleUiKey.Key, newState);
@@ -155,7 +164,21 @@ public sealed class IdCardConsoleSystem : SharedIdCardConsoleSystem
         if (component.TargetIdSlot.Item is not { Valid: true } targetId || !PrivilegedIdIsAuthorized(uid, component))
             return;
 
-        _idCard.TryChangeFullName(targetId, newFullName, player: player);
+        // Frontier
+        TryComp<ShuttleIdCardConsoleComponent>(uid, out var shuttleId);
+        var isFullAccess = !IsJobRenameOnly(uid, shuttleId);
+
+        // Frontier: add a shuttle suffix to the job title if not present
+        if (shuttleId is { AddShuttleSuffix: true } && TryComp<ShuttleDeedComponent>(component.PrivilegedIdSlot.Item, out var deed))
+        {
+            var suffix = $"({deed.ShuttleNameSuffix})";
+            if (!newJobTitle.EndsWith(suffix))
+                newJobTitle += " " + suffix;
+        }
+
+        // Frontier: wrapped with if
+        if (isFullAccess)
+            _idCard.TryChangeFullName(targetId, newFullName, player: player);
         _idCard.TryChangeJobTitle(targetId, newJobTitle, player: player);
 
         if (_prototype.TryIndex<JobPrototype>(newJobProto, out var job)
@@ -175,30 +198,31 @@ public sealed class IdCardConsoleSystem : SharedIdCardConsoleSystem
 
         var privilegedId = component.PrivilegedIdSlot.Item;
 
-        if (oldTags.SequenceEqual(newAccessList))
-            return;
-
-        // I hate that C# doesn't have an option for this and don't desire to write this out the hard way.
-        // var difference = newAccessList.Difference(oldTags);
-        var difference = newAccessList.Union(oldTags).Except(newAccessList.Intersect(oldTags)).ToHashSet();
-        // NULL SAFETY: PrivilegedIdIsAuthorized checked this earlier.
-        var privilegedPerms = _accessReader.FindAccessTags(privilegedId!.Value).ToHashSet();
-        if (!difference.IsSubsetOf(privilegedPerms))
+        // Frontier - instead of early-returning, this block was wrapped into an if condition
+        if (!oldTags.SequenceEqual(newAccessList) && isFullAccess)
         {
-            _sawmill.Warning($"User {ToPrettyString(uid)} tried to modify permissions they could not give/take!");
-            return;
+            // I hate that C# doesn't have an option for this and don't desire to write this out the hard way.
+            // var difference = newAccessList.Difference(oldTags);
+            var difference = newAccessList.Union(oldTags).Except(newAccessList.Intersect(oldTags)).ToHashSet();
+            // NULL SAFETY: PrivilegedIdIsAuthorized checked this earlier.
+            var privilegedPerms = _accessReader.FindAccessTags(privilegedId!.Value).ToHashSet();
+            if (!difference.IsSubsetOf(privilegedPerms))
+            {
+                _sawmill.Warning($"User {ToPrettyString(uid)} tried to modify permissions they could not give/take!");
+                return;
+            }
+
+            var addedTags = newAccessList.Except(oldTags).Select(tag => "+" + tag).ToList();
+            var removedTags = oldTags.Except(newAccessList).Select(tag => "-" + tag).ToList();
+            _access.TrySetTags(targetId, newAccessList);
+
+            /*TODO: ECS SharedIdCardConsoleComponent and then log on card ejection, together with the save.
+            This current implementation is pretty shit as it logs 27 entries (27 lines) if someone decides to give themselves AA*/
+            _adminLogger.Add(LogType.Action, LogImpact.Medium,
+                $"{ToPrettyString(player):player} has modified {ToPrettyString(targetId):entity} with the following accesses: [{string.Join(", ", addedTags.Union(removedTags))}] [{string.Join(", ", newAccessList)}]");
         }
 
-        var addedTags = newAccessList.Except(oldTags).Select(tag => "+" + tag).ToList();
-        var removedTags = oldTags.Except(newAccessList).Select(tag => "-" + tag).ToList();
-        _access.TrySetTags(targetId, newAccessList);
-
-        /*TODO: ECS SharedIdCardConsoleComponent and then log on card ejection, together with the save.
-        This current implementation is pretty shit as it logs 27 entries (27 lines) if someone decides to give themselves AA*/
-        _adminLogger.Add(LogType.Action, LogImpact.Medium,
-            $"{ToPrettyString(player):player} has modified {ToPrettyString(targetId):entity} with the following accesses: [{string.Join(", ", addedTags.Union(removedTags))}] [{string.Join(", ", newAccessList)}]");
-
-        UpdateStationRecord(uid, targetId, newFullName, newJobTitle, job);
+        UpdateStationRecord(uid, targetId, isFullAccess ? newFullName : null, newJobTitle, job);
     }
 
     /// <summary>
@@ -211,7 +235,7 @@ public sealed class IdCardConsoleSystem : SharedIdCardConsoleSystem
         EntityUid player,
         IdCardConsoleComponent? component = null)
     {
-        if (!Resolve(uid, ref component))
+        if (!Resolve(uid, ref component) || IsJobRenameOnly(uid))
             return;
 
         if (component.TargetIdSlot.Item is not { Valid: true } targetId || !PrivilegedIdIsAuthorized(uid, component))
@@ -219,13 +243,10 @@ public sealed class IdCardConsoleSystem : SharedIdCardConsoleSystem
 
         if (!EntityManager.TryGetComponent<ShuttleDeedComponent>(targetId, out var shuttleDeed))
             return;
-        else
+        else if (Deleted(shuttleDeed!.ShuttleUid))
         {
-            if (Deleted(shuttleDeed!.ShuttleUid))
-            {
-                RemComp<ShuttleDeedComponent>(targetId);
-                return;
-            }
+            RemComp<ShuttleDeedComponent>(targetId);
+            return;
         }
 
         // Ensure the name is valid and follows the convention
@@ -260,20 +281,26 @@ public sealed class IdCardConsoleSystem : SharedIdCardConsoleSystem
             return true;
 
         var privilegedId = component.PrivilegedIdSlot.Item;
-        return privilegedId != null && _accessReader.IsAllowed(privilegedId.Value, uid, reader);
+        return privilegedId != null && _accessReader.IsAllowed(privilegedId.Value, uid, reader) &&
+               (!TryComp<ShuttleIdCardConsoleComponent>(uid, out var comp) // Frontier
+                || !comp.RequiresCaptainAccess || IsIdCaptainOnGrid(privilegedId.Value, uid)); // Frontier
     }
 
-    private void UpdateStationRecord(EntityUid uid, EntityUid targetId, string newFullName, string newJobTitle, JobPrototype? newJobProto)
+    private void UpdateStationRecord(EntityUid uid, EntityUid targetId, string? newFullName, string newJobTitle, JobPrototype? newJobProto) // Frontier: made newFullName nullable
     {
         if (_station.GetOwningStation(uid) is not { } station
             || !EntityManager.TryGetComponent<StationRecordKeyStorageComponent>(targetId, out var keyStorage)
-            || keyStorage.Key is not { } key
-            || !_record.TryGetRecord<GeneralStationRecord>(station, key, out var record))
+            || keyStorage.Key is not { } key)
         {
             return;
         }
 
-        record.Name = newFullName;
+        // Frontier: find and copy the old record if not present
+        if (!_record.TryGetRecord<GeneralStationRecord>(station, key, out var record) && !TryMoveRecord(station, targetId, ref record))
+            return;
+
+        if (newFullName != null)
+            record.Name = newFullName;
         record.JobTitle = newJobTitle;
 
         if (newJobProto != null)
@@ -283,5 +310,70 @@ public sealed class IdCardConsoleSystem : SharedIdCardConsoleSystem
         }
 
         _record.Synchronize(station);
+    }
+
+    // Frontier
+    private bool IsJobRenameOnly(EntityUid uid, ShuttleIdCardConsoleComponent? comp = null)
+    {
+        if (!Resolve(uid, ref comp))
+            return false;
+        return comp.JobChangeOnly;
+    }
+
+    /// <summary>
+    ///   Returns true if idCardUid is an id card that owns the provided grid in the form of a purchased shuttle.
+    /// </summary>
+    private bool IsIdCaptainOnGrid(EntityUid idCardUid, EntityUid targetEntity)
+    {
+        if (!TryComp<ShuttleDeedComponent>(idCardUid, out var shuttleDeed))
+            return false;
+
+        var grid = Transform(targetEntity).GridUid;
+        if (grid == null)
+            return false;
+
+        return shuttleDeed.ShuttleUid == grid;
+    }
+
+    // Copied from ShipyardSystem.Consoles and modified - moves a record from any old station to the new one
+    private bool TryMoveRecord(EntityUid targetStation, EntityUid targetId, [NotNullWhen(true)] ref GeneralStationRecord? record)
+    {
+        var stationList = EntityQueryEnumerator<StationRecordsComponent>();
+        var recSuccess = false;
+        record = null;
+
+        if (TryComp<StationRecordKeyStorageComponent>(targetId, out var keyStorage)
+            && keyStorage.Key != null)
+        {
+            while (stationList.MoveNext(out var stationUid, out var stationRecComp))
+            {
+                if (!_record.TryGetRecord<GeneralStationRecord>(stationUid, keyStorage.Key.Value, out var oldRec, stationRecComp))
+                    continue;
+
+                _record.RemoveRecord(stationUid, keyStorage.Key.Value);
+                _record.CreateGeneralRecord(targetStation, targetId, oldRec.Name, oldRec.Age, oldRec.Species, oldRec.Gender, "Passenger", oldRec.Fingerprint, oldRec.DNA);
+
+                if (_record.TryGetRecord<GeneralStationRecord>(targetStation, keyStorage.Key.Value, out var newRecord))
+                {
+                    record = newRecord; // should never fail as we add it right above
+                    recSuccess = true;
+                    break;
+                }
+            }
+
+            // TODO: impossible if the player doesn't have existing records - the id itself is not tied to a character.
+            // if (!recSuccess
+            //     && _preferences.GetPreferences(args.Session.UserId).SelectedCharacter is HumanoidCharacterProfile profile)
+            // {
+            //     TryComp<FingerprintComponent>(player, out var fingerprintComponent);
+            //     TryComp<DnaComponent>(player, out var dnaComponent);
+            //     _records.CreateGeneralRecord((EntityUid) shuttleStation, targetId, profile.Name, profile.Age, profile.Species, profile.Gender, $"Captain", fingerprintComponent!.Fingerprint, dnaComponent!.DNA);
+            // }
+
+            _record.Synchronize(targetStation);
+            _record.Synchronize(targetId);
+        }
+
+        return recSuccess;
     }
 }

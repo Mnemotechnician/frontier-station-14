@@ -298,3 +298,45 @@
   components:
   - type: MarketModifier
     mod: 0.40
+
+# Shuttle ID card consoles
+- type: entity
+  parent: ComputerId
+  id: ComputerShuttleIdConsole
+  name: shuttle id card console
+  description: Used by shuttle captains to assign NanoTrasen employees to their respective shuttles.
+  suffix: Captain-only
+  components:
+  - type: ShuttleIdCardConsole
+    requiresCaptainAccess: true
+    jobChangeOnly: true
+  - type: Sprite
+    layers:
+    - map: ["computerLayerBody"]
+      state: computer
+    - map: ["computerLayerKeyboard"]
+      state: generic_keyboard
+    - map: ["computerLayerScreen"]
+      state: id
+    - map: ["computerLayerKeys"]
+      state: id_key
+  - type: Computer
+    board: ShuttleIDComputerCircuitboard
+
+- type: entity
+  parent: ComputerShuttleIdConsole
+  id: ComputerShuttleIdConsolePublic
+  suffix: Public, DO NOT MAP
+  components:
+  - type: ShuttleIdCardConsole
+    requiresCaptainAccess: false
+    jobChangeOnly: true
+
+- type: entity
+  parent: ComputerShuttleIdConsole
+  id: ComputerShuttleIdConsoleFull
+  suffix: Full, DO NOT MAP
+  components:
+  - type: ShuttleIdCardConsole
+    requiresCaptainAccess: true
+    jobChangeOnly: false
